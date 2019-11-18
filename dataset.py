@@ -18,8 +18,8 @@ class UrbanSound8KDataset(data.Dataset):
             chroma = self.dataset[index]['features']['chroma']
             spectral = self.dataset[index]['features']['spectral_contrast']
             tonnetz = self.dataset[index]['features']['tonnetz']
-            combo = torch.zeros([41, 85], dtype=torch.float32)
 
+            feature = np.concatenate((lm,chroma,spectral,tonnetz), axis=0)
             feature = torch.from_numpy(feature.astype(np.float32)).unsqueeze(0)
         elif self.mode == 'MC':
             # Edit here to load and concatenate the neccessary features to
@@ -29,8 +29,8 @@ class UrbanSound8KDataset(data.Dataset):
             chroma = self.dataset[index]['features']['chroma']
             spectral = self.dataset[index]['features']['spectral_contrast']
             tonnetz = self.dataset[index]['features']['tonnetz']
-            combo = torch.zeros([41, 85], dtype=torch.float32)
 
+            feature = np.concatenate((mfcc,chroma,spectral,tonnetz), axis=0)
             feature = torch.from_numpy(feature.astype(np.float32)).unsqueeze(0)
         elif self.mode == 'MLMC':
             # Edit here to load and concatenate the neccessary features to
@@ -41,11 +41,10 @@ class UrbanSound8KDataset(data.Dataset):
             chroma = self.dataset[index]['features']['chroma']
             spectral = self.dataset[index]['features']['spectral_contrast']
             tonnetz = self.dataset[index]['features']['tonnetz']
-            
-            combo = torch.zeros([2, 4], dtype=torch.float32)
 
+            feature = np.concatenate((mfcc,lm,chroma,spectral,tonnetz), axis=0)
             feature = torch.from_numpy(feature.astype(np.float32)).unsqueeze(0)
-
+            
         label = self.dataset[index]['classID']
         fname = self.dataset[index]['filename']
         return feature, label, fname
