@@ -24,14 +24,21 @@ if torch.cuda.is_available():
 else:
     DEVICE = torch.device("cpu")
 
+parser = argparse.ArgumentParser(
+    description="Train an Environment Sound Classification",
+    formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+)
+default_dataset_dir = Path.home() / ".cache" / "torch" / "datasets"
+parser.add_argument("--dataset-root", default=default_dataset_dir)
+parser.add_argument("--log-dir", default=Path("logs"), type=Path)
+parser.add_argument("--learning-rate", default=0.001, type=float, help="Learning rate")
+parser.add_argument("--batch-size", default=32, type=int, help="Number of images within each mini-batch",)
+parser.add_argument("--dropout", default=0.5, type = float)
 
 def main(args):
     tensor = trfm.ToTensor()
     transforms = [tensor]
-
     args.dataset_root.mkdir(parents=True, exist_ok=True)
-
-    composed = Compose(transforms)
 
     train_loader = torch.utils.data.DataLoader( 
         UrbanSound8KDataset(‘UrbanSound8K_train.pkl’, mode), 
@@ -40,7 +47,6 @@ def main(args):
         num_workers=8,
         pin_memory=True,
     ) 
-
      val_loader = torch.utils.data.DataLoader( 
         UrbanSound8KDataset(‘UrbanSound8K_test.pkl’, mode), 
         batch_size=32,
@@ -49,7 +55,7 @@ def main(args):
         pin_memory=True,
     )
 
-    for i, (input, target, filename) in enumerate(train_loader):
+
     #           training code
 
 
@@ -57,7 +63,7 @@ def main(args):
     #           validation code
 
 
-    model = CNN(height=32, width=32, channels=3, class_count=10, dropout=0.9)
+    model = CNN(height=85, width=41, channels=1, class_count=10, dropout=0.5)
 
     criterion = nn.CrossEntropyLoss()
 
@@ -71,7 +77,7 @@ def main(args):
     )
 
     trainer = Trainer(
-        model, train_loader,  val_loader, criterion, optimizer, summary_writer, DEVICE
+        model, train_loader, val_loader, criterion, optimizer, summary_writer, DEVICE
     )
 
     trainer.train(epochs=1, 2, 10, 10)
@@ -84,62 +90,65 @@ class CNN(nn.Module):
         super().__init__()
         self.input_shape = ImageShape(height=height, width=width, channels=channels)
         self.class_count = class_count
-
         self.dropout = nn.Dropout(dropout)
 
         self.conv1 = nn.Conv2d(
             in_channels=self.input_shape.channels,
             out_channels=32,
-            kernel_size=(5, 5),
-            padding=(2, 2),
+            kernel_size=(3, 3),
+            padding=(2, 2), #included?
+            stride=(2, 2)
         )
         self.initialise_layer(self.conv1)
         self.bn32 = nn.BatchNorm2d(32)
-        self.pool1 = nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2))
 
-        ## TASK 2-1: Define the second convolutional layer and initialise its parameters
         self.conv2 = nn.Conv2d(
             in_channels=32,
-            out_channels=64,
-            kernel_size=(5, 5),
+            out_channels=32,
+            kernel_size=(3, 3),
             padding=(2, 2),
+            stride=(2, 2)
         )
         self.initialise_layer(self.conv2)
+        #ALREADY DEFINED: self.bn32 = nn.BatchNorm2d(32)
+        self.pool1 = nn.MaxPool2d(kernel_size=(2, 2), stride=(1, 1))
+
+        self.conv3 = nn.Conv2d(
+            in_channels=64,
+            out_channels=64,
+            kernel_size=(3, 3),
+            padding=(2, 2),
+            stride=(2, 2)
+        )
+        self.initialise_layer(self.conv3)
         self.bn64 = nn.BatchNorm2d(64)
 
-        ## TASK 3-1: Define the second pooling layer
-        self.pool2 = nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2))
+        self.conv4 = nn.Conv2d(
+            in_channels=64,
+            out_channels=64,
+            kernel_size=(3, 3),
+            padding=(2, 2),
+            stride=(2, 2)
+        )
+        self.initialise_layer(self.conv4)
+        #ALREADY DEFINED: self.bn64 = nn.BatchNorm2d(64)
 
-        ## TASK 5-1: Define the first FC layer and initialise its parameters
-        self.fc1 = nn.Linear(4096, 1024)
+        self.fc1 = nn.Linear(15488, 1024)
         self.initialise_layer(self.fc1)
-        self.bnFC = nn.BatchNorm1d(1024)
 
-        ## TASK 6-1: Define the last FC layer and initialise its parameters
         self.fc2 = nn.Linear(1024, 10)
         self.initialise_layer(self.fc1)
 
 
     def forward(self, images: torch.Tensor) -> torch.Tensor:
         x = F.relu(self.bn32(self.conv1(images)))
+        x = F.relu(self.bn32(self.conv2(self.dropout(x))))
         x = self.pool1(x)
-
-        ## TASK 2-2: Pass x through the second convolutional layer
-        x = F.relu(self.bn64(self.conv2(x)))
-
-        ## TASK 3-2: Pass x through the second pooling layer
-        x = self.pool2(x)
-
-        ## TASK 4: Flatten the output of the pooling layer so it is of shape
-        ##         (batch_size, 4096)
+        x = F.relu(self.bn64(self.conv3(x)))
+        x = F.relu(self.bn64(self.conv4(self.dropout(x))))
         x = torch.flatten(x,1)
-
-        ## TASK 5-2: Pass x through the first fully connected layer
-        x = F.relu(self.bnFC(self.fc1(self.dropout(x))))
-
-        ## TASK 6-2: Pass x through the last fully connected layer
-        x = self.fc2(self.dropout(x))
-
+        x = F.sigmoid(self.fc1(self.dropout(x))))
+        x = F.softmax(self.fc2(x))
         return x
 
     @staticmethod
@@ -148,6 +157,138 @@ class CNN(nn.Module):
             nn.init.zeros_(layer.bias)
         if hasattr(layer, "weight"):
             nn.init.kaiming_normal_(layer.weight)
+
+class Trainer:
+    def __init__(
+        self,
+        model: nn.Module,
+        train_loader: DataLoader,
+        val_loader: DataLoader,
+        criterion: nn.Module,
+        optimizer: Optimizer,
+        summary_writer: SummaryWriter,
+        device: torch.device,
+    ):
+        self.model = model.to(device)
+        self.device = device
+        self.train_loader = train_loader
+        self.val_loader = val_loader
+        self.criterion = criterion
+        self.optimizer = optimizer
+        self.summary_writer = summary_writer
+        self.step = 0
+
+    def train(
+        self,
+        epochs: int,
+        val_frequency: int,
+        print_frequency: int = 20,
+        log_frequency: int = 5,
+        start_epoch: int = 0
+    ):
+        self.model.train()
+        for epoch in range(start_epoch, epochs):
+            self.model.train()
+            data_load_start_time = time.time()
+
+            for i, (input, target, filename) in enumerate(self.train_loader):
+                batch = input.to(self.device)
+                labels = target.to(self.device)
+                data_load_end_time = time.time()
+
+                logits = self.model.forward(batch)
+                loss = self.criterion(logits, labels)
+                loss.backward()
+                self.optimizer.step()
+                self.optimizer.zero_grad()
+
+                with torch.no_grad():
+                    preds = logits.argmax(-1)
+                    accuracy = compute_accuracy(labels, preds)
+
+                data_load_time = data_load_end_time - data_load_start_time
+                step_time = time.time() - data_load_end_time
+                if ((self.step + 1) % log_frequency) == 0:
+                    self.log_metrics(epoch, accuracy, loss, data_load_time, step_time)
+                if ((self.step + 1) % print_frequency) == 0:
+                    self.print_metrics(epoch, accuracy, loss, data_load_time, step_time)
+
+                self.step += 1
+                data_load_start_time = time.time()
+
+            self.summary_writer.add_scalar("epoch", epoch, self.step)
+            if ((epoch + 1) % val_frequency) == 0:
+                self.validate()
+                self.model.train()
+
+    def log_metrics(self, epoch, accuracy, loss, data_load_time, step_time):
+        self.summary_writer.add_scalar("epoch", epoch, self.step)
+        self.summary_writer.add_scalars(
+                "accuracy",
+                {"train": accuracy},
+                self.step
+        )
+        self.summary_writer.add_scalars(
+                "loss",
+                {"train": float(loss.item())},
+                self.step
+        )
+        self.summary_writer.add_scalar(
+                "time/data", data_load_time, self.step
+        )
+        self.summary_writer.add_scalar(
+                "time/data", step_time, self.step
+        )
+
+    def validate(self):
+        results = {"preds": [], "labels": []}
+        total_loss = 0
+        self.model.eval()
+
+        # No need to track gradients for validation, we're not optimizing.
+        with torch.no_grad():
+            for batch, labels in self.val_loader:
+                batch = batch.to(self.device)
+                labels = labels.to(self.device)
+                logits = self.model(batch)
+                loss = self.criterion(logits, labels)
+                total_loss += loss.item()
+                preds = logits.argmax(dim=-1).cpu().numpy()
+                results["preds"].extend(list(preds))
+                results["labels"].extend(list(labels.cpu().numpy()))
+
+        accuracy = compute_accuracy(
+            np.array(results["labels"]), np.array(results["preds"])
+        )
+        average_loss = total_loss / len(self.val_loader)
+
+        pca = compute_pca(
+            np.array(results["labels"]), np.array(results["preds"])
+        )
+
+        self.summary_writer.add_scalars(
+                "accuracy",
+                {"test": accuracy},
+                self.step
+        )
+        self.summary_writer.add_scalars(
+                "loss",
+                {"test": average_loss},
+                self.step
+        )
+        print(f"validation loss: {average_loss:.5f}, accuracy: {accuracy * 100:2.2f}")
+
+        print(f"class 1 accuracy: {pca[0] * 100:2.2f}")
+        print(f"class 2 accuracy: {pca[1] * 100:2.2f}")
+        print(f"class 3 accuracy: {pca[2] * 100:2.2f}")
+        print(f"class 4 accuracy: {pca[3] * 100:2.2f}")
+        print(f"class 5 accuracy: {pca[4] * 100:2.2f}")
+        print(f"class 6 accuracy: {pca[5] * 100:2.2f}")
+        print(f"class 7 accuracy: {pca[6] * 100:2.2f}")
+        print(f"class 8 accuracy: {pca[7] * 100:2.2f}")
+        print(f"class 9 accuracy: {pca[8] * 100:2.2f}")
+        print(f"class 10 t accuracy: {pca[9] * 100:2.2f}")
+
 
 def compute_accuracy(
     labels: Union[torch.Tensor, np.ndarray], preds: Union[torch.Tensor, np.ndarray]
