@@ -1,28 +1,30 @@
-import torch
 import time
-import argparse
-from pathlib import Path
 from multiprocessing import cpu_count
+from typing import Union, NamedTuple
 
 import torch
-import torchvision
 import torch.backends.cudnn
 import numpy as np
-import torchvision.transforms as trfm
 from torch import nn, optim
 from torch.nn import functional as F
+import torchvision.datasets
 from torch.optim.optimizer import Optimizer
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
+import torchvision
+import torchvision.transforms as trfm
 
+import argparse
+from pathlib import Path
 from dataset import UrbanSound8KDataset
+import pickle
+
+testdata = pickle.load(open(UrbanSound8KDataset(‘UrbanSound8K_train.pkl’, mode), 'rb'))
+mfcc = testdata[0]['features']['mfcc']
+print('MFCC')
+print(mfcc.shape)
 
 torch.backends.cudnn.benchmark = True
-
-if torch.cuda.is_available():
-    DEVICE = torch.device("cuda")
-else:
-    DEVICE = torch.device("cpu")
 
 parser = argparse.ArgumentParser(
     description="Train an Environment Sound Classification",
@@ -35,33 +37,44 @@ parser.add_argument("--learning-rate", default=0.001, type=float, help="Learning
 parser.add_argument("--batch-size", default=32, type=int, help="Number of images within each mini-batch",)
 parser.add_argument("--dropout", default=0.5, type = float)
 
+class ImageShape(NamedTuple):
+    height: int
+    width: int
+    channels: int
+
+if torch.cuda.is_available():
+    DEVICE = torch.device("cuda")
+else:
+    DEVICE = torch.device("cpu")
+
 def main(args):
     tensor = trfm.ToTensor()
     transforms = [tensor]
     args.dataset_root.mkdir(parents=True, exist_ok=True)
 
+    train_dataset = UrbanSound8KDataset(‘UrbanSound8K_train.pkl’, mode)
+    test_dataset = UrbanSound8KDataset(‘UrbanSound8K_test.pkl’, mode)
+
     train_loader = torch.utils.data.DataLoader( 
-        UrbanSound8KDataset(‘UrbanSound8K_train.pkl’, mode), 
+        train_dataset,
         batch_size=32,
         shuffle=True, 
         num_workers=8,
         pin_memory=True,
     ) 
      val_loader = torch.utils.data.DataLoader( 
-        UrbanSound8KDataset(‘UrbanSound8K_test.pkl’, mode), 
+        test_dataset,
         batch_size=32,
         shuffle=False, 
         num_workers=8,
         pin_memory=True,
     )
 
-
+    #????????
     #           training code
-
-
     for i, (input, target, filename) in enumerate(val_loader):
     #           validation code
-
+    #?????????
 
     model = CNN(height=85, width=41, channels=1, class_count=10, dropout=0.5)
 
@@ -83,7 +96,7 @@ def main(args):
     trainer.train(epochs=1, 2, 10, 10)
 
     summary_writer.close()
-}
+
 
 class CNN(nn.Module):
     def __init__(self, height: int, width: int, channels: int, class_count: int, dropout: float):
@@ -347,11 +360,6 @@ def get_summary_writer_log_dir(args: argparse.Namespace) -> str:
       f"dropout={args.dropout}_"
       f"bs={args.batch_size}_"
       f"lr={args.learning_rate}_"
-      f"momentum=0.9_"
-      f"perspective={args.data_aug_perspective}_" +
-      f"brightness={args.data_aug_brightness}_" +
-      ("hflip_" if args.data_aug_hflip else "") +
-      f"run_"
     )
     i = 0
     while i < 1000:

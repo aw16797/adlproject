@@ -23,7 +23,12 @@ print('Ton')
 print(tonnetz.shape)
 
 a = np.concatenate((mfcc,chroma,spectral,tonnetz),axis=0)
+print('?')
 print(a.shape)
+
+b = np.concatenate((lm, chroma, spectral, tonnetz), axis=0)
+print('?')
+print(b.shape)
 
 # Creates PIL image
 img = Image.fromarray(a, 'L')
