@@ -4,16 +4,23 @@ import numpy as np
 import pickle
 from PIL import Image
 
-dataset = pickle.load(open('UrbanSound8K_test.pkl', 'rb'))
+def rescale(arr):
+    arr_min = arr.min()
+    arr_max = arr.max()
+    arr_norm = (arr - arr_min) / (arr_max - arr_min)
+    arr_scale = 255.0 * arr_norm
+    return arr_scale
 
-mfcc = dataset[0]['features']['mfcc']
-lm = dataset[0]['features']['logmelspec']
-chroma = dataset[0]['features']['chroma']
-spectral = dataset[0]['features']['spectral_contrast']
-tonnetz = dataset[0]['features']['tonnetz']
+dataset = pickle.load(open('UrbanSound8K_test.pkl', 'rb'))
+index = 352
+mfcc = dataset[index]['features']['mfcc']
+lm = dataset[index]['features']['logmelspec']
+chroma = dataset[index]['features']['chroma']
+spectral = dataset[index]['features']['spectral_contrast']
+tonnetz = dataset[index]['features']['tonnetz']
 print('MFCC')
 print(mfcc.shape)
-print('LMC')
+print('LM')
 print(lm.shape)
 print('Chr')
 print(chroma.shape)
@@ -24,7 +31,11 @@ print(tonnetz.shape)
 
 a = np.concatenate((mfcc,chroma,spectral,tonnetz),axis=0)
 print(a.shape)
+# Create image
 
-# Creates PIL image
-img = Image.fromarray(a, 'L')
+a2 = rescale(a)
+print(a2.astype(int))
+
+img = Image.fromarray(np.uint8(a2.astype(int)), 'L')
+img.save('mc.png')
 img.show()
