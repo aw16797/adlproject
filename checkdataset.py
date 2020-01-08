@@ -11,8 +11,12 @@ def rescale(arr):
     arr_scale = 255.0 * arr_norm
     return arr_scale
 
-dataset = pickle.load(open('UrbanSound8K_test.pkl', 'rb'))
-index = 352
+dataset = pickle.load(open('UrbanSound8K_train.pkl', 'rb'))
+print(len(dataset))
+index=250
+print('dataset[250]:')
+print(dataset[index])
+
 mfcc = dataset[index]['features']['mfcc']
 lm = dataset[index]['features']['logmelspec']
 chroma = dataset[index]['features']['chroma']
@@ -37,5 +41,5 @@ a2 = rescale(a)
 print(a2.astype(int))
 
 img = Image.fromarray(np.uint8(a2.astype(int)), 'L')
-img.save('mc.png')
+#img.save('mc.png')
 img.show()
