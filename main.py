@@ -25,7 +25,7 @@ parser = argparse.ArgumentParser(
     formatter_class=argparse.ArgumentDefaultsHelpFormatter,
 )
 parser.add_argument("--log-dir", default=Path("logs"), type=Path)
-parser.add_argument("--mode", default="LMC", type=string, help="Which feature mode to execute for (MC, LMC or MLMC)")
+parser.add_argument("--mode", default="LMC", type=str, help="Which feature mode to execute for (MC, LMC or MLMC)")
 parser.add_argument("--learning-rate", default=1e-3, type=float, help="Learning rate")
 parser.add_argument("--dropout", default=0.5, type=float, help="Dropout variable")
 parser.add_argument("--batch-size", default=32, type=int, help="Number of samples within each mini-batch")
@@ -37,30 +37,24 @@ parser.add_argument("--val-frequency", default=2, type=int, help="How frequently
 parser.add_argument("--log-frequency", default=10, type=int, help="How frequently to save logs to tensorboard in number of steps")
 parser.add_argument("--print-frequency", default=10, type=int, help="How frequently to print progress to the command line in number of steps")
 
+class ImageShape(NamedTuple):
+    height: int
+    width: int
+    channels: int
+
 if torch.cuda.is_available():
     DEVICE = torch.device("cuda")
 else:
     DEVICE = torch.device("cpu")
 
-
 def main(args):
     transform = ToTensor()
 
-    train_loader = torch.utils.data.DataLoader( 
-        UrbanSound8KDataset(‘UrbanSound8K_train.pkl’, args.mode), 
-        batch_size=args.batch_size,
-        shuffle=True, 
-        num_workers=arg.workers,
-        pin_memory=True,
-    ) 
+    train_data = UrbanSound8KDataset("UrbanSound8K_train.pkl", args.mode)
+    test_data = UrbanSound8KDataset("UrbanSound8K_test.pkl", args.mode)
 
-     val_loader = torch.utils.data.DataLoader( 
-        UrbanSound8KDataset(‘UrbanSound8K_test.pkl’, args.mode), 
-        batch_size=args.batch_size,
-        shuffle=False, 
-        num_workers=args.workers,
-        pin_memory=True,
-    )
+    train_loader = torch.utils.data.DataLoader(train_data, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, pin_memory=True)
+    val_loader = torch.utils.data.DataLoader(test_data, batch_size=args.batch_size, shuffle=False, num_workers=args.workers, pin_memory=True)
 
     model = CNN(height=85, width=41, channels=1, class_count=10, dropout=args.dropout)
 
@@ -122,7 +116,7 @@ class CNN(nn.Module):
         self.initialise_layer(self.conv2)
 
         self.conv3 = nn.Conv2d(
-            in_channels=64,
+            in_channels=32,
             out_channels=64,
             kernel_size=(3, 3),
             padding=(2, 2),
@@ -218,8 +212,6 @@ class Trainer:
 
                 batch = input.to(self.device)
                 labels = target.to(self.device)
-                fles = filename.to(self.device
-                )
                 data_load_end_time = time.time()
 
                 logits = self.model.forward(batch)
@@ -283,31 +275,45 @@ class Trainer:
                 "time/data", step_time, self.step
         )
 
-    def validate(self):
+    def validate(self, epoch, epochs):
         results = {"preds": [], "labels": []}
         total_loss = 0
         self.model.eval()
+
+        files = []
+        final_logits = torch.Tensor()
 
         # No need to track gradients for validation, we're not optimizing.
         with torch.no_grad():
             for i, (input, target, filename) in enumerate(val_loader):
                 batch = input.to(self.device)
                 labels = target.to(self.device)
+                files.append(filename)
                 logits = self.model(batch)
+                #store logits locally
+                torch.cat(final_logits, logits, dim=0)
                 loss = self.criterion(logits, labels)
                 total_loss += loss.item()
                 preds = logits.argmax(dim=-1).cpu().numpy()
                 results["preds"].extend(list(preds))
                 results["labels"].extend(list(labels.cpu().numpy()))
 
-        accuracy = compute_accuracy(
-            np.array(results["labels"]), np.array(results["preds"])
-        )
+        # save logits to file
+        if (epoch == epochs-1):
+            torch.save(final_logits, 'lmc.pt')
+            torch.save(torch.ToTensor(files), 'files.pt')
+
         average_loss = total_loss / len(self.val_loader)
 
-        pca = compute_pca(
-            np.array(results["labels"]), np.array(results["preds"])
-        )
+        final_scores = torch.Tensor()
+        length = final_logits.size()
+        for i in range (0, length[0]):
+            scores = F.softmax(final_logits[i, :])
+            torch.cat((final_scores, scores), dim=0)
+
+        #pca = compute_pca(
+        #    np.array(results["labels"]), np.array(results["preds"]), files, np.array(scores)
+        #)
 
         self.summary_writer.add_scalars(
                 "accuracy",
@@ -319,6 +325,7 @@ class Trainer:
                 {"test": average_loss},
                 self.step
         )
+
         print(f"validation loss: {average_loss:.5f}, accuracy: {accuracy * 100:2.2f}")
 
         print(f"class 1 accuracy: {pca[0] * 100:2.2f}")
@@ -332,7 +339,6 @@ class Trainer:
         print(f"class 9 accuracy: {pca[8] * 100:2.2f}")
         print(f"class 10 accuracy: {pca[9] * 100:2.2f}")
 
-
 def compute_accuracy(
     labels: Union[torch.Tensor, np.ndarray], preds: Union[torch.Tensor, np.ndarray]
 ) -> float:
@@ -345,14 +351,38 @@ def compute_accuracy(
     return float((labels == preds).sum()) / len(labels)
 
 def compute_pca(
-    labels: Union[torch.Tensor, np.ndarray], preds: Union[torch.Tensor, np.ndarray]
+    labels: Union[torch.Tensor, np.ndarray],
+    preds: Union[torch.Tensor, np.ndarray],
+    files: Union[torch.Tensor, np.ndarray],
+    logits: Union[torch.Tensor, np.ndarray]
 ):
-    """
-    Args:
-        labels: ``(batch_size, class_count)`` tensor or array containing example labels
-        preds: ``(batch_size, class_count)`` tensor or array containing model prediction
-    """
     assert len(labels) == len(preds)
+
+    file_score_dict = {}
+    file_count_dict = {}
+    file_label_dict = {}
+
+    length = scores.size()
+    for i in range (0, length[0]):
+        f = files[i]
+        file_label_dict[f] = labels[i]
+        if f in file_dict:
+            file_count_dict[f] += 1
+            file_dict[f] += scores[i]
+        else:
+            file_count_dict[f] = 1
+            file_dict[f] = scores[i]
+
+    file_avg_dict = {}
+    file_pred_dict = {}
+
+    for key, val in file_score_dict.items():
+        file_avg_dict[key] = val/file_count_dict[key]
+        file_pred_dict[key] = [file_avg_dict[key].argmax(dim=-1).cpu().numpy(), file_label_dict[key]]
+
+    total_class_dict = {}
+
+    correct_class_dict = {}
 
     # stores total number of examples for each class
     class_dict = {0:0, 1:0, 2:0, 3:0, 4:0, 5:0, 6:0, 7:0, 8:0, 9:0}
@@ -371,7 +401,7 @@ def compute_pca(
     for key, val in pca_dict.items():
         pca_dict[key] = (correct_dict[key]/class_dict[key])
 
-    return pca_dict
+    return pca_dicts
 
 def get_summary_writer_log_dir(args: argparse.Namespace) -> str:
     """Get a unique directory that hasn't been logged to before for use with a TB
