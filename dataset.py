@@ -3,7 +3,6 @@ from torch.utils import data
 import numpy as np
 import pickle
 
-
 class UrbanSound8KDataset(data.Dataset):
     def __init__(self, dataset_path, mode):
         self.dataset = pickle.load(open(dataset_path, 'rb'))
@@ -44,7 +43,7 @@ class UrbanSound8KDataset(data.Dataset):
 
             feature = np.concatenate((mfcc,lm,chroma,spectral,tonnetz), axis=0)
             feature = torch.from_numpy(feature.astype(np.float32)).unsqueeze(0)
-            
+
         label = self.dataset[index]['classID']
         fname = self.dataset[index]['filename']
         return feature, label, fname

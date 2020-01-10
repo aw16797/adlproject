@@ -19,11 +19,6 @@ from pathlib import Path
 from dataset import UrbanSound8KDataset
 import pickle
 
-testdata = pickle.load(open(UrbanSound8KDataset(‘UrbanSound8K_train.pkl’, mode), 'rb'))
-mfcc = testdata[0]['features']['mfcc']
-print('MFCC')
-print(mfcc.shape)
-
 torch.backends.cudnn.benchmark = True
 
 parser = argparse.ArgumentParser(
@@ -52,29 +47,31 @@ def main(args):
     transforms = [tensor]
     args.dataset_root.mkdir(parents=True, exist_ok=True)
 
-    train_dataset = UrbanSound8KDataset(‘UrbanSound8K_train.pkl’, mode)
-    test_dataset = UrbanSound8KDataset(‘UrbanSound8K_test.pkl’, mode)
+    dataset_train = UrbanSound8KDataset(‘UrbanSound8K_train.pkl’, LMC)
 
     train_loader = torch.utils.data.DataLoader( 
-        train_dataset,
+        dataset_train,
         batch_size=32,
         shuffle=True, 
         num_workers=8,
         pin_memory=True,
     ) 
      val_loader = torch.utils.data.DataLoader( 
-        test_dataset,
+        UrbanSound8KDataset(‘UrbanSound8K_test.pkl’, 'LMC')
         batch_size=32,
         shuffle=False, 
         num_workers=8,
         pin_memory=True,
     )
 
-    #????????
+    for i, (input, target, filename) in enumerate(train_loader):
+
     #           training code
+
     for i, (input, target, filename) in enumerate(val_loader):
+
     #           validation code
-    #?????????
+
 
     model = CNN(height=85, width=41, channels=1, class_count=10, dropout=0.5)
 
