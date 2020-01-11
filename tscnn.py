@@ -11,14 +11,7 @@ def main():
     final_scores = torch.Tensor()
 
     logits_length = lmc_logits.size()
-    for i in range (0, logits_length[0]):
-        lmc_scores = F.softmax(lmc_logits[i, :])
-        mc_scores = F.softmax(mc_logits[i, :])
-        ave_scores = torch.tensor((lmc_scores + mc_scores) / 2)
-        if( i == 0):
-            final_scores = torch.cat([final_scores, ave_scores], dim=0)
-        else:
-            final_scores = torch.stack([final_scores, ave_scores], dim=0)
+    final_scores = torch.tensor((F.softmax(lmc_logits, dim=1) + F.softmax(mc_logits, dim=1)) / 2)
 
     pca = compute_pca(class_labels, file_labels, final_scores)
 

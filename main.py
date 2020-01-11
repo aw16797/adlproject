@@ -35,8 +35,8 @@ parser.add_argument("--workers", default=8, type=int, help="Number of workers fo
 parser.add_argument("--decay", default=1e-3, type=float, help="Weight decay to use in SGD Optimizer")
 parser.add_argument("--momentum", default=0.9, type=float, help="Learning rate")
 parser.add_argument("--val-frequency", default=1, type=int, help="How frequently to test the model on the validation set in number of epochs")
-parser.add_argument("--log-frequency", default=10, type=int, help="How frequently to save logs to tensorboard in number of steps")
-parser.add_argument("--print-frequency", default=100, type=int, help="How frequently to print progress to the command line in number of steps")
+parser.add_argument("--log-frequency", default=150, type=int, help="How frequently to save logs to tensorboard in number of steps")
+parser.add_argument("--print-frequency", default=150, type=int, help="How frequently to print progress to the command line in number of steps")
 
 class ImageShape(NamedTuple):
     height: int
@@ -53,8 +53,11 @@ def main(args):
     transform = ToTensor()
 
     train_data = UrbanSound8KDataset("UrbanSound8K_train.pkl", args.mode)
+    print("train data size")
+    print(train_data[0].shape())
     test_data = UrbanSound8KDataset("UrbanSound8K_test.pkl", args.mode)
-
+    print("test data size")
+    print(test_data[0].shape())
     train_loader = torch.utils.data.DataLoader(train_data, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, pin_memory=True)
     val_loader = torch.utils.data.DataLoader(test_data, batch_size=args.batch_size, shuffle=False, num_workers=args.workers, pin_memory=True)
 
@@ -177,9 +180,9 @@ class CNN(nn.Module):
             # "In the forward method, apply self.dropout to the input of
             #  each fully connected layer."
 
-        x = F.sigmoid(self.bnFC(self.fc1(self.dropout(x))))
+        x = torch.sigmoid(self.bnFC(self.fc1(self.dropout(x))))
 
-        x = F.softmax(self.fc2(self.dropout(x)))
+        x = F.softmax(self.fc2(self.dropout(x)), dim=0)
 
         return x
 
@@ -229,14 +232,14 @@ class Trainer:
             data_load_start_time = time.time()
 
             for i, (input, target, filename) in enumerate(self.train_loader):
-                print("    !!! --- Trainer.train: train loader for loop")
+                if ((self.step + 1) % print_frequency) == 0: print("    !!! --- Trainer.train: train loader for loop")
 
                 batch = input.to(self.device)
                 labels = target.to(self.device)
                 data_load_end_time = time.time()
 
                 logits = self.model.forward(batch)
-                print("    !!! --- Trainer.train: logits calculated")
+                if ((self.step + 1) % print_frequency) == 0: print("        !!! --- Trainer.train: logits calculated")
 
                 loss = self.criterion(logits, labels)
 
@@ -249,7 +252,7 @@ class Trainer:
                     preds = logits.argmax(-1)
                     accuracy = compute_accuracy(labels, preds)
 
-                print("    !!! --- Trainer.train: accuracy calculated")
+                if ((self.step + 1) % print_frequency) == 0: print("        !!! --- Trainer.train: accuracy calculated")
 
 
                 data_load_time = data_load_end_time - data_load_start_time
@@ -315,6 +318,8 @@ class Trainer:
 
         # No need to track gradients for validation, we're not optimizing.
         with torch.no_grad():
+            print("    !!! --- Trainer.validate: pre for loop")
+
             for i, (input, target, filename) in enumerate(self.val_loader):
                 print("    !!! --- Trainer.validate: val loader for loop")
                 batch = input.to(self.device)
@@ -344,12 +349,13 @@ class Trainer:
         final_scores = torch.Tensor()
         final_scores = final_scores.to(self.device)
         logits_length = final_logits.size()
-        for i in range (0, logits_length[0]):
-            scores = torch.Tensor(F.softmax(final_logits[i, :]))
-            if( i == 0):
-                final_scores = torch.cat([final_scores, scores], dim=0)
-            else:
-                final_scores = torch.stack([final_scores, scores], dim=0)
+        final_scores = F.softmax(final_logits, dim=1)
+        # for i in range (0, logits_length[0]):
+        #     scores = torch.Tensor(F.softmax(final_logits[i, :]))
+        #     if( i == 0):
+        #         final_scores = torch.cat([final_scores, scores], dim=0)
+        #     else:
+        #         final_scores = torch.stack([final_scores, scores], dim=0)
 
         pca = compute_pca(
             class_labels, file_labels, final_scores
