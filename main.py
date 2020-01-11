@@ -53,11 +53,11 @@ def main(args):
     transform = ToTensor()
 
     train_data = UrbanSound8KDataset("UrbanSound8K_train.pkl", args.mode)
-    print("train data size")
-    print(train_data[0].shape())
+    # print("train data size")
+    # print(train_data.shape())
     test_data = UrbanSound8KDataset("UrbanSound8K_test.pkl", args.mode)
-    print("test data size")
-    print(test_data[0].shape())
+    # print("test data size")
+    # print(test_data.shape())
     train_loader = torch.utils.data.DataLoader(train_data, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, pin_memory=True)
     val_loader = torch.utils.data.DataLoader(test_data, batch_size=args.batch_size, shuffle=False, num_workers=args.workers, pin_memory=True)
 
@@ -264,6 +264,7 @@ class Trainer:
 
                 self.step += 1
                 data_load_start_time = time.time()
+                break
 
             self.summary_writer.add_scalar("epoch", epoch, self.step)
             if ((epoch + 1) % val_frequency) == 0:
@@ -318,13 +319,12 @@ class Trainer:
 
         # No need to track gradients for validation, we're not optimizing.
         with torch.no_grad():
-            print("    !!! --- Trainer.validate: pre for loop")
+            print("        !!! --- Trainer.validate: pre for loop")
 
             for i, (input, target, filename) in enumerate(self.val_loader):
-                print("    !!! --- Trainer.validate: val loader for loop")
                 batch = input.to(self.device)
                 labels = target.to(self.device)
-                filenames.append(filename)
+                filenames.extend(list(filename))
                 logits = self.model(batch)
                 final_logits = torch.cat([final_logits, logits], dim=0)
                 loss = self.criterion(logits, labels)
@@ -333,15 +333,20 @@ class Trainer:
                 class_preds.extend(list(preds))
                 class_labels.extend(list(labels.cpu().numpy()))
 
+            print("        !!! --- Trainer.validate: post for loop")
+
         # save logits to file
         if (epoch == epochs-1):
             torch.save(final_logits, self.mode+'.pt')
             torch.save(torch.ToTensor(filenames), 'files.pt')
             torch.save(class_labels, 'labels.pt')
+            print("        !!! --- Trainer.validate: pre for loop")
 
+        print("        !!! --- Trainer.validate: pre compute accuracy")
         accuracy = compute_accuracy(
             np.array(class_labels), np.array(class_preds)
         )
+        print("        !!! --- Trainer.validate: post compute accuracy")
 
         average_loss = total_loss / len(self.val_loader)
 
@@ -357,8 +362,9 @@ class Trainer:
         #     else:
         #         final_scores = torch.stack([final_scores, scores], dim=0)
 
+        print("        !!! --- Trainer.validate: pre compute pca")
         pca = compute_pca(
-            class_labels, file_labels, final_scores
+            class_labels, filenames, final_scores
         )
 
         overall_ave = sum(pca)/10
@@ -405,14 +411,19 @@ def compute_pca(
     file_labels: Union[torch.Tensor, np.ndarray],
     scores: Union[torch.Tensor, np.ndarray],
 ):
+    print("            !!! --- compute_pca: start")
+
 
     file_label_dict = {}    #to store correct class label of each file
     file_count_dict = {}    #to store number of segments relating to each file
     file_score_dict = {}    #to store scores of each segment to related file
 
-    scores_size = scores.size()
-    for i in range (0, scores_size[0]):
-        x = file_labels[i]                        # x = file of segment with scores[i]
+    scoresize = scores.size()
+    print("            !!! --- compute_pca: pre loop for segment->files")
+    for i in range (0, scoresize[0]):
+        x = file_labels[i]
+        print("FILENAME")
+        print(x)                     # x = file of segment with scores[i]
         file_label_dict[x] = class_labels[i]      #save actual label for file[x] in dictionary
         if x in file_score_dict:
             file_count_dict[x] += 1
@@ -421,12 +432,18 @@ def compute_pca(
             file_count_dict[x] = 1
             file_score_dict[x] = scores[i]
 
+    print("            !!! --- compute_pca: finished loop for segment->files")
+
     file_avg_dict = {}      #to store average score for each file
     file_pred_dict = {}     #to store class prediction for each file
+
+    print("            !!! --- compute_pca: pre loop for averaging scores per file")
 
     for key, val in file_score_dict.items():
         file_avg_dict[key] = val/file_count_dict[key]
         file_pred_dict[key] = file_avg_dict[key].argmax(dim=-1).cpu().numpy()
+
+    print("            !!! --- compute_pca: finished loop for averaging scores per file")
 
     #Number of files for each class
     total_class_dict = {0:0, 1:0, 2:0, 3:0, 4:0, 5:0, 6:0, 7:0, 8:0, 9:0}
@@ -437,16 +454,26 @@ def compute_pca(
     #PCA
     pca_dict = {}
 
+    print("            !!! --- compute_pca: pre loop for counting files->classes")
+
     for key, val in file_label_dict.items():          #for all files
         total_class_dict[val] += 1                    #count number of files for each class
         if(val == file_pred_dict[key]):               #if file is correctly predicted...
             correct_class_dict[val] += 1              #count correct prediction of file to class
+
+    print("            !!! --- compute_pca: finished loop for counting files->classes")
+
+    print("            !!! --- compute_pca: pre loop for calculating class accuracy")
 
     for key, val in total_class_dict.items():         #calculate pca
         if(total_class_dict[key] != 0):
           pca_dict[key] = (correct_class_dict[key]/total_class_dict[key])
         else:
           pca_dict[key] = 0
+
+    print("            !!! --- compute_pca: finished loop for counting files->classes")
+
+    print("            !!! --- compute_pca: end of function")
 
     return pca_dict
 
