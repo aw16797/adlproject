@@ -3,28 +3,24 @@ from torch.nn import functional as F
 import numpy as np
 from typing import Union, NamedTuple
 
-lmcLogits = torch.tensor(([0.1,1.3], [1.0,0.3]))
-mcLogits = torch.tensor(([0.1,3.1], [3.0,0]))
-labels = [1,0]
-files = [3,5]
+def main():
+    lmc_logits = torch.load("LMC")
+    mc_logits = torch.load("MC")
+    class_labels = torch.load("labels.pt")
+    file_lables = torch.load("files.pt")
+    final_scores = torch.Tensor()
 
-final_scores = torch.Tensor()
-results = {"preds": [], "labels": []}
+    logits_length = lmc_logits.size()
+    for i in range (0, logits_length[0]):
+        lmc_scores = F.softmax(lmc_logits[i, :])
+        mc_scores = F.softmax(mc_logits[i, :])
+        ave_scores = torch.tensor((lmc_scores + mc_scores) / 2)
+        if( i == 0):
+            final_scores = torch.cat([final_scores, ave_scores], dim=0)
+        else:
+            final_scores = torch.stack([final_scores, ave_scores], dim=0)
 
-length = lmcLogits.size()
-
-for i in range (0, length[0]):
-    lmcScores = F.softmax(lmcLogits[i, :])
-    mcScores = F.softmax(mcLogits[i, :])
-    aveScores = (lmcPreds + mcPreds) / 2
-    pred = aveScores.argmax(dim=-1).cpu().numpy()
-    results["preds"].append(int(pred))
-    results["labels"].append(labels[i])
-    torch.cat((final_scores, aveScores), dim=0)
-
-accuracy = compute_accuracy(
-       np.array(results["labels"]), np.array(results["preds"]), files, np.array(final_scores)
-    )
+    pca = compute_pca(class_labels, file_labels, final_scores)
 
     print(f"class 1 accuracy: {pca[0] * 100:2.2f}")
     print(f"class 2 accuracy: {pca[1] * 100:2.2f}")
@@ -37,31 +33,53 @@ accuracy = compute_accuracy(
     print(f"class 9 accuracy: {pca[8] * 100:2.2f}")
     print(f"class 10 accuracy: {pca[9] * 100:2.2f}")
 
-def compute_accuracy(
-    labels: Union[torch.Tensor, np.ndarray],
-    preds: Union[torch.Tensor, np.ndarray],
-    files: Union[torch.Tenosr, np.ndarray],
-    scores: Union[torch.Tensor, np.ndarray]
-    ):
-    assert len(labels) == len(preds)
 
-    # stores total number of examples for each class
-    class_dict = {0:0, 1:0, 2:0, 3:0, 4:0, 5:0, 6:0, 7:0, 8:0, 9:0}
+def compute_pca(
+    class_labels: Union[torch.Tensor, np.ndarray],
+    file_labels: Union[torch.Tensor, np.ndarray],
+    scores: Union[torch.Tensor, np.ndarray],
+):
 
-    # stores total number of correct predictions for each class
-    correct_dict = {0:0, 1:0, 2:0, 3:0, 4:0, 5:0, 6:0, 7:0, 8:0, 9:0}
+    file_label_dict = {}    #to store correct class label of each file
+    file_count_dict = {}    #to store number of segments relating to each file
+    file_score_dict = {}    #to store scores of each segment to related file
 
-    # stores accuracy for each class
-    accuracy_dict = {0:0.0, 1:0.0, 2:0.0, 3:0.0, 4:0.0, 5:0.0, 6:0.0, 7:0.0, 8:0.0, 9:0.0}
+    scores_size = scores.size()
+    for i in range (0, scores_size[0]):
+        x = file_labels[i]                        # x = file of segment with scores[i]
+        file_label_dict[x] = class_labels[i]      #save actual label for file[x] in dictionary
+        if x in file_score_dict:
+            file_count_dict[x] += 1
+            file_score_dict[x] += scores[i]
+        else:
+            file_count_dict[x] = 1
+            file_score_dict[x] = scores[i]
 
-"""
-    for i in range(0,len(labels)-1):
-        class_dict[labels[i]] += 1
-        if labels[i] == preds[i]:
-            correct_dict[labels[i]] += 1
+    file_avg_dict = {}      #to store average score for each file
+    file_pred_dict = {}     #to store class prediction for each file
 
-    for key, val in pca_dict.items():
-        pca_dict[key] = (correct_dict[key]/class_dict[key])
+    for key, val in file_score_dict.items():
+        file_avg_dict[key] = val/file_count_dict[key]
+        file_pred_dict[key] = file_avg_dict[key].argmax(dim=-1).cpu().numpy()
+
+    #Number of files for each class
+    total_class_dict = {0:0, 1:0, 2:0, 3:0, 4:0, 5:0, 6:0, 7:0, 8:0, 9:0}
+
+    #Correctly predicted classes
+    correct_class_dict = {0:0, 1:0, 2:0, 3:0, 4:0, 5:0, 6:0, 7:0, 8:0, 9:0}
+
+    #PCA
+    pca_dict = {}
+
+    for key, val in file_label_dict.items():          #for all files
+        total_class_dict[val] += 1                    #count number of files for each class
+        if(val == file_pred_dict[key]):               #if file is correctly predicted...
+            correct_class_dict[val] += 1              #count correct prediction of file to class
+
+    for key, val in total_class_dict.items():         #calculate pca
+        if(total_class_dict[key] != 0):
+          pca_dict[key] = (correct_class_dict[key]/total_class_dict[key])
+        else:
+          pca_dict[key] = 0
 
     return pca_dict
-"""

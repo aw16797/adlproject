@@ -2,3 +2,4 @@ UrbanSound8K_test.pkl
 UrbanSound8K_train.pkl
 venv/
 .DS_Store
+logs/
