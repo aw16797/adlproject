@@ -17,7 +17,7 @@ from torch.optim.optimizer import Optimizer
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from dataset import UrbanSound8KDataset
-from torchsummary import summary
+#from torchsummary import summary
 
 torch.backends.cudnn.benchmark = True
 
@@ -30,13 +30,13 @@ parser.add_argument("--mode", default="LMC", type=str, help="Which feature mode 
 parser.add_argument("--learning-rate", default=1e-3, type=float, help="Learning rate")
 parser.add_argument("--dropout", default=0.5, type=float, help="Dropout variable")
 parser.add_argument("--batch-size", default=32, type=int, help="Number of samples within each mini-batch")
-parser.add_argument("--epochs", default=20, type=int, help="Number of epochs to train for")
+parser.add_argument("--epochs", default=10, type=int, help="Number of epochs to train for")
 parser.add_argument("--workers", default=8, type=int, help="Number of workers for loaders")
 parser.add_argument("--decay", default=1e-3, type=float, help="Weight decay to use in SGD Optimizer")
 parser.add_argument("--momentum", default=0.9, type=float, help="Learning rate")
-parser.add_argument("--val-frequency", default=5, type=int, help="How frequently to test the model on the validation set in number of epochs")
+parser.add_argument("--val-frequency", default=1, type=int, help="How frequently to test the model on the validation set in number of epochs")
 parser.add_argument("--log-frequency", default=10, type=int, help="How frequently to save logs to tensorboard in number of steps")
-parser.add_argument("--print-frequency", default=10, type=int, help="How frequently to print progress to the command line in number of steps")
+parser.add_argument("--print-frequency", default=100, type=int, help="How frequently to print progress to the command line in number of steps")
 
 class ImageShape(NamedTuple):
     height: int
@@ -59,7 +59,8 @@ def main(args):
     val_loader = torch.utils.data.DataLoader(test_data, batch_size=args.batch_size, shuffle=False, num_workers=args.workers, pin_memory=True)
 
     model = CNN(height=85, width=41, channels=1, class_count=10, dropout=args.dropout, mode=args.mode)
-    summary(model, (1,85,41))
+    #summary(model, (1,85,41))
+    print("!!! --- Model defined")
 
     criterion = nn.CrossEntropyLoss()
 
@@ -75,6 +76,8 @@ def main(args):
     trainer = Trainer(
         model, train_loader,  val_loader, criterion, optimizer, summary_writer, DEVICE, args.mode
     )
+
+    print("!!! --- Trainer defined")
 
     trainer.train(
         args.epochs,
@@ -220,16 +223,20 @@ class Trainer:
     ):
         self.model.train()
         for epoch in range(start_epoch, epochs):
+            print("!!! --- Trainer.train: epoch for loop %d", epoch)
+
             self.model.train()
             data_load_start_time = time.time()
 
             for i, (input, target, filename) in enumerate(self.train_loader):
+                print("    !!! --- Trainer.train: train loader for loop")
 
                 batch = input.to(self.device)
                 labels = target.to(self.device)
                 data_load_end_time = time.time()
 
                 logits = self.model.forward(batch)
+                print("    !!! --- Trainer.train: logits calculated")
 
                 loss = self.criterion(logits, labels)
 
@@ -241,6 +248,9 @@ class Trainer:
                 with torch.no_grad():
                     preds = logits.argmax(-1)
                     accuracy = compute_accuracy(labels, preds)
+
+                print("    !!! --- Trainer.train: accuracy calculated")
+
 
                 data_load_time = data_load_end_time - data_load_start_time
                 step_time = time.time() - data_load_end_time
@@ -295,13 +305,18 @@ class Trainer:
         total_loss = 0
         self.model.eval()
 
+        class_preds = []
         class_labels = []
         filenames = []
         final_logits = torch.Tensor()
+        final_logits = final_logits.to(self.device)
+
+        print("    !!! --- Trainer.validate: begin validation")
 
         # No need to track gradients for validation, we're not optimizing.
         with torch.no_grad():
-            for i, (input, target, filename) in enumerate(val_loader):
+            for i, (input, target, filename) in enumerate(self.val_loader):
+                print("    !!! --- Trainer.validate: val loader for loop")
                 batch = input.to(self.device)
                 labels = target.to(self.device)
                 filenames.append(filename)
@@ -309,9 +324,8 @@ class Trainer:
                 final_logits = torch.cat([final_logits, logits], dim=0)
                 loss = self.criterion(logits, labels)
                 total_loss += loss.item()
-                #preds = logits.argmax(dim=-1).cpu().numpy()
-                #results["preds"].extend(list(preds))
-                #results["labels"].extend(list(labels.cpu().numpy()))
+                preds = logits.argmax(dim=-1).cpu().numpy()
+                class_preds.extend(list(preds))
                 class_labels.extend(list(labels.cpu().numpy()))
 
         # save logits to file
@@ -320,14 +334,18 @@ class Trainer:
             torch.save(torch.ToTensor(filenames), 'files.pt')
             torch.save(class_labels, 'labels.pt')
 
+        accuracy = compute_accuracy(
+            np.array(class_labels), np.array(class_preds)
+        )
 
         average_loss = total_loss / len(self.val_loader)
 
         #softmax to scores
         final_scores = torch.Tensor()
+        final_scores = final_scores.to(self.device)
         logits_length = final_logits.size()
         for i in range (0, logits_length[0]):
-            scores = torch.tensor(F.softmax(final_logits[i, :]))
+            scores = torch.Tensor(F.softmax(final_logits[i, :]))
             if( i == 0):
                 final_scores = torch.cat([final_scores, scores], dim=0)
             else:
@@ -342,7 +360,7 @@ class Trainer:
 
         self.summary_writer.add_scalars(
                 "accuracy",
-                {"test": overall_ave},
+                {"test": accuracy},
                 self.step
         )
         self.summary_writer.add_scalars(
@@ -363,6 +381,7 @@ class Trainer:
         print(f"class 8 accuracy: {pca[7] * 100:2.2f}")
         print(f"class 9 accuracy: {pca[8] * 100:2.2f}")
         print(f"class 10 accuracy: {pca[9] * 100:2.2f}")
+        print(f"overall accuracy: {overall_ave * 100:2.2f}")
 
 def compute_accuracy(
     labels: Union[torch.Tensor, np.ndarray], preds: Union[torch.Tensor, np.ndarray]
