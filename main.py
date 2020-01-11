@@ -17,6 +17,7 @@ from torch.optim.optimizer import Optimizer
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from dataset import UrbanSound8KDataset
+from torchsummary import summary
 
 torch.backends.cudnn.benchmark = True
 
@@ -33,7 +34,7 @@ parser.add_argument("--epochs", default=20, type=int, help="Number of epochs to 
 parser.add_argument("--workers", default=8, type=int, help="Number of workers for loaders")
 parser.add_argument("--decay", default=1e-3, type=float, help="Weight decay to use in SGD Optimizer")
 parser.add_argument("--momentum", default=0.9, type=float, help="Learning rate")
-parser.add_argument("--val-frequency", default=2, type=int, help="How frequently to test the model on the validation set in number of epochs")
+parser.add_argument("--val-frequency", default=5, type=int, help="How frequently to test the model on the validation set in number of epochs")
 parser.add_argument("--log-frequency", default=10, type=int, help="How frequently to save logs to tensorboard in number of steps")
 parser.add_argument("--print-frequency", default=10, type=int, help="How frequently to print progress to the command line in number of steps")
 
@@ -47,6 +48,7 @@ if torch.cuda.is_available():
 else:
     DEVICE = torch.device("cpu")
 
+
 def main(args):
     transform = ToTensor()
 
@@ -56,7 +58,8 @@ def main(args):
     train_loader = torch.utils.data.DataLoader(train_data, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, pin_memory=True)
     val_loader = torch.utils.data.DataLoader(test_data, batch_size=args.batch_size, shuffle=False, num_workers=args.workers, pin_memory=True)
 
-    model = CNN(height=85, width=41, channels=1, class_count=10, dropout=args.dropout)
+    model = CNN(height=85, width=41, channels=1, class_count=10, dropout=args.dropout, mode=args.mode)
+    summary(model, (1,85,41))
 
     criterion = nn.CrossEntropyLoss()
 
@@ -70,7 +73,7 @@ def main(args):
     )
 
     trainer = Trainer(
-        model, train_loader,  val_loader, criterion, optimizer, summary_writer, DEVICE
+        model, train_loader,  val_loader, criterion, optimizer, summary_writer, DEVICE, args.mode
     )
 
     trainer.train(
@@ -84,9 +87,19 @@ def main(args):
 
 
 class CNN(nn.Module):
-    def __init__(self, height: int, width: int, channels: int, class_count: int, dropout: float):
+    def __init__(self, height: int, width: int, channels: int, class_count: int, dropout: float, mode: str):
         super().__init__()
-        self.input_shape = ImageShape(height=height, width=width, channels=channels)
+        self.mlmc = False
+        if (mode == "MLMC"): self.mlmc = 1
+
+        self.height = height
+        self.width = width
+
+        if (self.mlmc):
+            self.height = 145
+            self.width = 41
+
+        self.input_shape = ImageShape(height=self.height, width=self.width, channels=channels)
         self.class_count = class_count
 
         self.dropout = nn.Dropout(dropout)
@@ -95,23 +108,21 @@ class CNN(nn.Module):
         self.bn64 = nn.BatchNorm2d(64)
         self.bnFC = nn.BatchNorm1d(1024)
 
-        self.pool = nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2))
+        self.pool = nn.MaxPool2d(kernel_size=(2, 2), padding=1)
 
         self.conv1 = nn.Conv2d(
             in_channels=self.input_shape.channels,
             out_channels=32,
             kernel_size=(3, 3),
-            padding=(2, 2),
-            stride=(2, 2),
+            padding=1,
         )
         self.initialise_layer(self.conv1)
 
         self.conv2 = nn.Conv2d(
             in_channels=32,
-            out_channels=32, # should be 64?
+            out_channels=32,
             kernel_size=(3, 3),
-            padding=(2, 2),
-            stride=(2, 2),
+            padding=1,
         )
         self.initialise_layer(self.conv2)
 
@@ -119,8 +130,7 @@ class CNN(nn.Module):
             in_channels=32,
             out_channels=64,
             kernel_size=(3, 3),
-            padding=(2, 2),
-            stride=(2, 2),
+            padding=1,
         )
         self.initialise_layer(self.conv3)
 
@@ -128,12 +138,15 @@ class CNN(nn.Module):
             in_channels=64,
             out_channels=64,
             kernel_size=(3, 3),
-            padding=(2, 2),
-            stride=(2, 2),
+            padding=1,
+            stride=2,
         )
         self.initialise_layer(self.conv4)
 
-        self.fc1 = nn.Linear(15488, 1024)
+        if self.mlmc:
+            self.fc1 = nn.Linear(26048, 1024)
+        else:
+            self.fc1 = nn.Linear(15488, 1024)
         self.initialise_layer(self.fc1)
 
         self.fc2 = nn.Linear(1024, 10)
@@ -185,6 +198,7 @@ class Trainer:
         optimizer: Optimizer,
         summary_writer: SummaryWriter,
         device: torch.device,
+        mode: str,
     ):
         self.model = model.to(device)
         self.device = device
@@ -194,6 +208,7 @@ class Trainer:
         self.optimizer = optimizer
         self.summary_writer = summary_writer
         self.step = 0
+        self.mode = mode
 
     def train(
         self,
@@ -239,7 +254,7 @@ class Trainer:
 
             self.summary_writer.add_scalar("epoch", epoch, self.step)
             if ((epoch + 1) % val_frequency) == 0:
-                self.validate()
+                self.validate(epoch, epochs)
                 # self.validate() will put the model in validation mode,
                 # so we have to switch back to train mode afterwards
                 self.model.train()
@@ -281,7 +296,7 @@ class Trainer:
         self.model.eval()
 
         class_labels = []
-        file_labels = []
+        filenames = []
         final_logits = torch.Tensor()
 
         # No need to track gradients for validation, we're not optimizing.
@@ -289,20 +304,22 @@ class Trainer:
             for i, (input, target, filename) in enumerate(val_loader):
                 batch = input.to(self.device)
                 labels = target.to(self.device)
-                file_labels.append(filename)
+                filenames.append(filename)
                 logits = self.model(batch)
-                torch.cat(final_logits, logits, dim=0)
+                final_logits = torch.cat([final_logits, logits], dim=0)
                 loss = self.criterion(logits, labels)
                 total_loss += loss.item()
                 #preds = logits.argmax(dim=-1).cpu().numpy()
                 #results["preds"].extend(list(preds))
                 #results["labels"].extend(list(labels.cpu().numpy()))
-                class_labels.append(list(labels.cpu().numpy()))
+                class_labels.extend(list(labels.cpu().numpy()))
 
         # save logits to file
         if (epoch == epochs-1):
-            torch.save(final_logits, 'lmc.pt')
-            torch.save(torch.ToTensor(files), 'files.pt')
+            torch.save(final_logits, self.mode+'.pt')
+            torch.save(torch.ToTensor(filenames), 'files.pt')
+            torch.save(class_labels, 'labels.pt')
+
 
         average_loss = total_loss / len(self.val_loader)
 
@@ -320,9 +337,12 @@ class Trainer:
             class_labels, file_labels, final_scores
         )
 
+        overall_ave = sum(pca)/10
+        print(f"Overall accuracy: {overall_ave * 100:2.2f}")
+
         self.summary_writer.add_scalars(
                 "accuracy",
-                {"test": accuracy},
+                {"test": overall_ave},
                 self.step
         )
         self.summary_writer.add_scalars(
